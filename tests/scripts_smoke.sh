@@ -635,6 +635,7 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/build-info.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-features.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-features.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/notification-actions.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-target-context.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/descriptor.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/patches/engine.js"
@@ -655,6 +656,7 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/Cargo.toml"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/CHANGELOG.md"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/computer-use-linux/Cargo.toml"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/notification-actions-linux/Cargo.toml"
     assert_file_not_exists "$pkg_root/opt/codex-desktop/update-builder/global-dictation-linux/Cargo.toml"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/read-aloud-linux/Cargo.toml"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/updater/Cargo.toml"
@@ -804,6 +806,7 @@ JSON
     assert_not_contains "$staged_config" "localComment"
     assert_not_contains "$staged_config" "disabled-feature"
     assert_contains "$update_builder_manifest" "record-replay-linux/Cargo.toml"
+    assert_contains "$update_builder_manifest" "notification-actions-linux/Cargo.toml"
     assert_contains "$update_builder_manifest" "global-dictation-linux/Cargo.toml"
     assert_contains "$update_builder_manifest" "assets/codex-linux.png"
     assert_not_contains "$update_builder_manifest" "^node-runtime/"
@@ -2417,6 +2420,43 @@ SCRIPT
         bash "$repo/scripts/rebuild-candidate.sh" "$explicit_dmg" >"$workspace/explicit.out" 2>&1
     first_line="$(sed -n '1p' "$workspace/explicit.log")"
     [[ "$first_line" == *"<$explicit_realpath>"* ]] || fail "Explicit transactional build should receive explicit DMG: $first_line"
+}
+
+test_make_rebuild_targets_omit_empty_dmg_argument() {
+    info "Checking make rebuild targets omit an unset DMG argument"
+    local workspace="$TMP_DIR/make-rebuild-dmg"
+    local repo="$workspace/repo"
+    local explicit_dmg="$workspace/explicit.dmg"
+
+    mkdir -p "$repo/scripts"
+    cp "$REPO_DIR/Makefile" "$repo/Makefile"
+    printf '%s' "explicit" >"$explicit_dmg"
+
+    cat >"$repo/scripts/rebuild-candidate.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+set -eu
+printf 'CALL:'
+for arg in "$@"; do
+    printf '<%s>' "$arg"
+done
+printf '\n'
+SCRIPT
+    chmod +x "$repo/scripts/rebuild-candidate.sh"
+
+    make -C "$repo" rebuild >"$workspace/rebuild-default.out"
+    assert_contains "$workspace/rebuild-default.out" "CALL:"
+    assert_not_contains "$workspace/rebuild-default.out" "CALL:< >"
+    assert_not_contains "$workspace/rebuild-default.out" "CALL:<"
+
+    make -C "$repo" rebuild-install >"$workspace/install-default.out"
+    assert_contains "$workspace/install-default.out" "CALL:<--install>"
+    assert_not_contains "$workspace/install-default.out" "CALL:<--install><"
+
+    make -C "$repo" rebuild DMG="$explicit_dmg" >"$workspace/rebuild-explicit.out"
+    assert_contains "$workspace/rebuild-explicit.out" "CALL:<$explicit_dmg>"
+
+    make -C "$repo" rebuild-install DMG="$explicit_dmg" >"$workspace/install-explicit.out"
+    assert_contains "$workspace/install-explicit.out" "CALL:<--install><$explicit_dmg>"
 }
 
 test_candidate_install_is_transactional() {
@@ -7382,7 +7422,7 @@ async function Wa(e){return e}
 async function Hw(e){return process.platform!==`win32`&&process.platform!==`darwin`?null:(zw=!0,Lw??Rw??(Rw=(async()=>{let r=await Ww(e.buildFlavor,e.appBrand,e.repoRoot),i=new n.Tray(r.defaultIcon);return i})()))}
 async function Ww(e,t,i){if(process.platform===`darwin`){return null}let r=K9(e,t,i);return r==null?{defaultIcon:await n.app.getFileIcon(process.execPath,{size:`small`}),chronicleRunningIcon:null}:{defaultIcon:r,chronicleRunningIcon:null}}
 function K9(e,t,r){let a=[(0,i.join)(r,`electron`,`src`,`icons`,`tray.png`)];for(let e of a){let t=n.nativeImage.createFromPath(e);if(!t.isEmpty())return t}return null}
-var pb=class{trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(){this.tray={on(){},setContextMenu(){},popUpContextMenu(){}};this.onTrayButtonClick=()=>{};this.tray.on(`click`,()=>{this.onTrayButtonClick()}),this.tray.on(`right-click`,()=>{this.openNativeTrayMenu()})}async handleMessage(e){switch(e.type){case`tray-menu-threads-changed`:this.trayMenuThreads=e.trayMenuThreads;return}}openNativeTrayMenu(){this.updateChronicleTrayIcon();let e=n.Menu.buildFromTemplate(this.getNativeTrayMenuItems());e.once(`menu-will-show`,()=>{this.isNativeTrayMenuOpen=!0}),e.once(`menu-will-close`,()=>{this.isNativeTrayMenuOpen=!1,this.handleNativeTrayMenuClosed()}),this.tray.popUpContextMenu(e)}updateChronicleTrayIcon(){}getNativeTrayMenuItems(){return[]}}
+var pb=class{nativeTrayClickSuppressionReason=null;clearNativeTrayClickSuppressionTimeout=null;chronicleTrayIconRefreshInterval=null;chronicleTrayIconState=`default`;isNativeTrayMenuOpen=!1;trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(){this.tray={on(){},setContextMenu(){},popUpContextMenu(){}};this.onTrayButtonClick=()=>{};this.tray.on(`click`,()=>{this.onTrayButtonClick()}),this.tray.on(`right-click`,()=>{this.openNativeTrayMenu()})}async handleMessage(e){switch(e.type){case`tray-menu-threads-changed`:this.trayMenuThreads=e.trayMenuThreads;return}}openNativeTrayMenu(){this.updateChronicleTrayIcon();let e=n.Menu.buildFromTemplate(this.getNativeTrayMenuItems());e.once(`menu-will-show`,()=>{this.isNativeTrayMenuOpen=!0}),e.once(`menu-will-close`,()=>{this.isNativeTrayMenuOpen=!1,this.handleNativeTrayMenuClosed()}),this.tray.popUpContextMenu(e)}updateChronicleTrayIcon(){}getNativeTrayMenuItems(){return[]}}
 v&&k.on(`close`,e=>{this.persistPrimaryWindowBounds(k);let t=this.getPrimaryWindows().some(e=>e!==k);if(process.platform===`win32`&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}if(process.platform===`darwin`&&!this.isAppQuitting&&!t){e.preventDefault(),k.hide()}});
 let E=process.platform===`win32`;
 let oe=async()=>{O=!0;try{await Hw({appBrand:a.U(),buildFlavor:b,repoRoot:j.repoRoot})}catch(e){O=!1}};
@@ -7398,7 +7438,8 @@ JS
     assert_contains "$extracted/.vite/build/main-test.js" '(process.platform===`win32`||process.platform===`linux`)&&!this.isAppQuitting'
     assert_contains "$extracted/.vite/build/main-test.js" '!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())'
     assert_contains "$extracted/.vite/build/main-test.js" 'setLinuxTrayContextMenu(){let e=n.Menu.buildFromTemplate(this.getNativeTrayMenuItems())'
-    assert_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&this.setLinuxTrayContextMenu(),this.tray.on(`click`'
+    assert_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&(codexLinuxSetTrayController(this),this.setLinuxTrayContextMenu()),this.tray.on(`click`'
+    assert_contains "$extracted/.vite/build/main-test.js" 'codexLinuxTrayRecoveryHandler=()=>{let e=codexLinuxTrayController;e?.setLinuxTrayContextMenu?.()}'
     assert_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`?this.openNativeTrayMenu():this.onTrayButtonClick()'
     assert_contains "$extracted/.vite/build/main-test.js" 'openNativeTrayMenu(){if(process.platform===`linux`&&(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress()))return;'
     assert_contains "$extracted/.vite/build/main-test.js" 'let e=process.platform===`linux`&&this.setLinuxTrayContextMenu?this.setLinuxTrayContextMenu():n.Menu.buildFromTemplate'
@@ -7505,7 +7546,7 @@ NODE
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`)' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`)&&!this.isAppQuitting' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'setLinuxTrayContextMenu(){' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&this.setLinuxTrayContextMenu(),this.tray.on(`click`' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&(codexLinuxSetTrayController(this),this.setLinuxTrayContextMenu()),this.tray.on(`click`' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`?this.openNativeTrayMenu():this.onTrayButtonClick()' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress()' '3'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'openNativeTrayMenu(){if(process.platform===`linux`&&(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress()))return;' '1'
@@ -7675,7 +7716,7 @@ JS
 var Xge={"general-settings":xh,"keyboard-shortcuts":ks,appearance:Pf,agent:gU},H7={},Zge=[`general-settings`,`profile`,`keyboard-shortcuts`,`appearance`,`agent`,`personalization`,`mcp-settings`,`connections`,`git-settings`,`local-environments`,`worktrees`,`browser-use`,`computer-use`,`data-controls`],Qge=[{key:`app`,heading:H7.appHeading,slugs:[`general-settings`,`profile`,`keyboard-shortcuts`,`appearance`,`connections`,`git-settings`,`usage`]}];function n_e(){let e=e=>{switch(e.slug){case`general-settings`:case`agent`:case`personalization`:return!0;case`keyboard-shortcuts`:return!0}};if(O)bb0:switch(D.slug){case`usage`:k=g;break bb0;case`appearance`:case`general-settings`:case`agent`:case`git-settings`:case`account`:case`data-controls`:case`personalization`:k=!1;break bb0;case`keyboard-shortcuts`:k=!1;break bb0;}}function s_e(e){let{slug:n}=e,r=c_e[n];return (0,$.jsx)(r,{})}var c_e={"general-settings":Z(async()=>(await s(async()=>{let{GeneralSettings:e}=await import(`./general-settings-DZbwMmWz.js`);return{GeneralSettings:e}},[],import.meta.url)).GeneralSettings),"keyboard-shortcuts":Z(async()=>(await s(async()=>{let{KeyboardShortcutsSettings:e}=await import(`./keyboard-shortcuts-settings-test.js`);return{KeyboardShortcutsSettings:e}},[],import.meta.url)).KeyboardShortcutsSettings)};
 JS
     cat > "$extracted/webview/assets/keyboard-shortcuts-settings-test.js" <<'JS'
-slug:`keyboard-shortcuts`;export default function KeyboardShortcutsSettings(){}
+import{s as __toESM}from"./chunk-test.js";import{t as __reactFactory}from"./react-test.js";import{t as __jsxFactory}from"./jsx-runtime-test.js";function KeyboardShortcutsSettings(){let t=(0,React.useState)(null);return (0,$.jsx)(`div`,{children:t})}var React,$;initialize(()=>{React=__toESM(__reactFactory(),1),$=__jsxFactory()})();slug:`keyboard-shortcuts`;export{KeyboardShortcutsSettings};
 JS
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
@@ -7691,6 +7732,9 @@ JS
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "codex-linux-warm-start-enabled"
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "codex-linux-prompt-window-enabled"
     assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" 'import{t as Toggle}from"./linux-settings-toggle-linux.js"'
+    assert_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" 'import{codexLinuxReact as React,codexLinuxJsx as $}from"./keyboard-shortcuts-settings-test.js"'
+    assert_not_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "__reactFactory"
+    assert_not_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "__jsxFactory"
     assert_not_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "function LinuxSwitch"
     assert_not_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "bg-token-text-primary"
     assert_not_contains "$extracted/webview/assets/linux-desktop-settings-linux.js" "translate-x-4"
@@ -7722,7 +7766,7 @@ test_keybinds_settings_patch_warns_on_bundle_shape_miss() {
     make_fake_extracted_asar "$extracted" 'let D={removeMenu(){},setMenuBarVisibility(){},setIcon(){},once(){}};let t={join(){}};let a={existsSync(){return true},statSync(){return {isFile(){return false}}}};let n={shell:{openPath(){return ""},showItemInFolder(){}}};...process.platform===`win32`?{autoHideMenuBar:!0}:{},process.platform===`win32`&&D.removeMenu(),foo)}),D.once(`ready-to-show`,()=>{var sa=Mi({id:`fileManager`,label:`Finder`,icon:`apps/finder.png`,kind:`fileManager`,darwin:{detect:()=>`open`,args:e=>ai(e)},win32:{label:`File Explorer`,icon:`apps/file-explorer.png`,detect:ca,args:e=>ai(e),open:async({path:e})=>la(e)}});function ca(){let e=1;return e}async function la(e){let t=ua(e);if(t&&(0,a.statSync)(t).isFile()){n.shell.showItemInFolder(t);return}let r=t??e,i=await n.shell.openPath(r);if(i)throw Error(i)}function ua(e){return e}var Ua=Mi({id:`systemDefault`,label:`System Default App`,icon:`apps/file-explorer.png`,kind:`systemDefault`,hidden:!0,darwin:{icon:`apps/finder.png`,detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)},win32:{detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)},linux:{detect:()=>`system-default`,iconPath:()=>null,args:e=>[e],open:async({path:e})=>Wa(e)}});async function Wa(e){return e}'
     rm "$extracted/webview/assets/settings-row-test.js"
     cat > "$extracted/webview/assets/keyboard-shortcuts-settings-test.js" <<'JS'
-slug:`keyboard-shortcuts`;export default function KeyboardShortcutsSettings(){}
+import{s as __toESM}from"./chunk-test.js";import{t as __reactFactory}from"./react-test.js";import{t as __jsxFactory}from"./jsx-runtime-test.js";function KeyboardShortcutsSettings(){let t=(0,React.useState)(null);return (0,$.jsx)(`div`,{children:t})}var React,$;initialize(()=>{React=__toESM(__reactFactory(),1),$=__jsxFactory()})();slug:`keyboard-shortcuts`;export{KeyboardShortcutsSettings};
 JS
     cat > "$extracted/webview/assets/settings-sections-test.js" <<'JS'
 var e=[`general-settings`,`profile`,`keyboard-shortcuts`],t=`general-settings`,n=[{slug:`general-settings`},{slug:`keyboard-shortcuts`}];
@@ -9262,6 +9306,29 @@ EOF
     )
 }
 
+test_notification_actions_bridge_accepts_prebuilt_binary() {
+    local workspace="$TMP_DIR/notification-actions-bridge"
+    local source_binary="$workspace/prebuilt/codex-notification-actions-linux"
+    local install_dir="$workspace/codex-app"
+    local target_binary="$install_dir/resources/native/codex-notification-actions-linux"
+
+    mkdir -p "$(dirname "$source_binary")" "$install_dir/resources/native"
+    cp "$TRUE_BIN" "$source_binary"
+    chmod 0755 "$source_binary"
+
+    (
+        export SCRIPT_DIR="$REPO_DIR"
+        export INSTALL_DIR="$install_dir"
+        export CODEX_NOTIFICATION_ACTIONS_SOURCE="$source_binary"
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/notification-actions.sh"
+        stage_linux_notification_actions_bridge
+    )
+
+    assert_file_exists "$target_binary"
+    assert_mode "$target_binary" "755"
+}
+
 main() {
     test_common_helper_sourcing
     test_package_icon_source_resolution
@@ -9295,6 +9362,7 @@ main() {
     test_fresh_pinned_dmg_preserves_cached_dmg_metadata
     test_fresh_reuse_dmg_uses_cache_when_metadata_matches
     test_rebuild_candidate_uses_validated_default_dmg
+    test_make_rebuild_targets_omit_empty_dmg_argument
     test_candidate_install_is_transactional
     test_candidate_promotion_refuses_a_running_final_app
     test_candidate_backup_retention_is_bounded
@@ -9346,6 +9414,7 @@ main() {
     test_native_module_rebuild_uses_local_electron_rebuild_toolchain
     test_native_module_rebuild_accepts_prebuilt_source
     test_bundled_plugin_builders_accept_prebuilt_binaries
+    test_notification_actions_bridge_accepts_prebuilt_binary
     test_bundled_plugin_system_computer_use_preserves_cosmic_helper_name
     test_browser_use_node_repl_fallback_runtime
     test_browser_use_file_url_policy_patch_behavior
